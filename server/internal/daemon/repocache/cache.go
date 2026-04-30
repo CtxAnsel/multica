@@ -267,7 +267,8 @@ type WorktreeParams struct {
 	RepoURL     string // remote URL to look up in the cache
 	WorkDir     string // parent directory for the worktree (e.g. task workdir)
 	AgentName   string // for branch naming
-	TaskID      string // for branch naming uniqueness
+	TaskID             string // for branch naming uniqueness
+	Branch            string // optional branch to check out (defaults to remote default branch)
 }
 
 // WorktreeResult describes a successfully created worktree.
@@ -307,15 +308,20 @@ func (c *Cache) CreateWorktree(params WorktreeParams) (*WorktreeResult, error) {
 		)
 	}
 
-	// Determine the default branch to base the worktree on. getRemoteDefaultBranch
-	// walks origin/HEAD → origin/main, origin/master → bare-HEAD hint into
-	// origin/<same> → single-entry scan of origin/* → bare HEAD (only if
-	// origin/* is empty). Reaching "" here means the cache is in a state we
-	// refuse to guess from (no origin/HEAD, no main/master, bare HEAD doesn't
-	// match any origin/* entry, and origin/* has multiple candidates).
-	baseRef := getRemoteDefaultBranch(barePath)
-	if baseRef == "" {
-		return nil, fmt.Errorf("cannot resolve default branch for %s: bare cache at %s has no usable refs (origin/* is empty or ambiguous and bare HEAD has no match). The cache may be corrupted; delete it and retry", params.RepoURL, barePath)
+	// Determine the base ref for the worktree: use user-specified branch if provided,
+	// otherwise resolve the remote default branch.
+	var baseRef string
+	if params.Branch != "" {
+		// Validate that the requested branch exists in the remote.
+		if err := verifyBranchExists(barePath, params.Branch); err != nil {
+			return nil, fmt.Errorf("branch %q: %w", params.Branch, err)
+		}
+		baseRef = params.Branch
+	} else {
+		baseRef = getRemoteDefaultBranch(barePath)
+		if baseRef == "" {
+			return nil, fmt.Errorf("cannot resolve default branch for %s: bare cache at %s has no usable refs (origin/* is empty or ambiguous and bare HEAD has no match). The cache may be corrupted; delete it and retry", params.RepoURL, barePath)
+		}
 	}
 
 	// Build branch name: agent/{sanitized-name}/{short-task-id}
@@ -467,6 +473,22 @@ func updateExistingWorktree(worktreePath, branchName, baseRef string) (string, e
 		return "", fmt.Errorf("git checkout -b (retry): %s: %w", strings.TrimSpace(string(out2)), err2)
 	}
 	return branchName, nil
+}
+
+// verifyBranchExists checks if a branch exists in the remote tracking refs.
+// Returns nil if the branch exists, or an error describing why it doesn't.
+func verifyBranchExists(barePath, branchName string) error {
+	// Check origin/<branch> first (remote-tracking ref).
+	cmd := exec.Command("git", "-C", barePath, "rev-parse", "--verify", "origin/"+branchName)
+	if err := cmd.Run(); err == nil {
+		return nil
+	}
+	// Also accept refs/heads/<branch> for locally-created branches.
+	cmd = exec.Command("git", "-C", barePath, "rev-parse", "--verify", "refs/heads/"+branchName)
+	if err := cmd.Run(); err == nil {
+		return nil
+	}
+	return fmt.Errorf("branch %q not found in remote (did you fetch?)", branchName)
 }
 
 // getRemoteDefaultBranch returns a ref path (e.g. "refs/remotes/origin/main")

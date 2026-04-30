@@ -25,8 +25,11 @@ var repoCheckoutCmd = &cobra.Command{
 	RunE:  runRepoCheckout,
 }
 
+var checkoutBranch string
+
 func init() {
 	repoCmd.AddCommand(repoCheckoutCmd)
+	repoCheckoutCmd.Flags().StringVarP(&checkoutBranch, "branch", "b", "", "Branch to check out (defaults to remote default branch)")
 }
 
 func runRepoCheckout(cmd *cobra.Command, args []string) error {
@@ -41,7 +44,6 @@ func runRepoCheckout(cmd *cobra.Command, args []string) error {
 	agentName := os.Getenv("MULTICA_AGENT_NAME")
 	taskID := os.Getenv("MULTICA_TASK_ID")
 
-	// Use current working directory as the checkout target.
 	workDir, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
@@ -53,6 +55,9 @@ func runRepoCheckout(cmd *cobra.Command, args []string) error {
 		"workdir":      workDir,
 		"agent_name":   agentName,
 		"task_id":      taskID,
+	}
+	if checkoutBranch != "" {
+		reqBody["branch"] = checkoutBranch
 	}
 
 	data, err := json.Marshal(reqBody)
@@ -86,7 +91,7 @@ func runRepoCheckout(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintf(os.Stdout, "%s\n", result.Path)
-	fmt.Fprintf(os.Stderr, "Checked out %s → %s (branch: %s)\n", repoURL, result.Path, result.BranchName)
+	fmt.Fprintf(os.Stderr, "Checked out %s \u2192 %s (branch: %s)\n", repoURL, result.Path, result.BranchName)
 
 	return nil
 }
